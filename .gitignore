@@ -1,0 +1,19 @@
+# Environments and caches
+.venv/
+__pycache__/
+*.pyc
+
+# Generated outputs and logs
+*.log
+ocr_word_map.json
+words.txt
+test_words.txt
+
+# Generated wordlists and data dumps
+wordnet.txt
+wiktionary_english_titles.txt
+wiktionary_english_words.txt
+enwiktionary-latest-pages-articles-multistream.xml.bz2
+
+# Sample exports
+test_chat/
