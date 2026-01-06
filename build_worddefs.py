@@ -18,7 +18,7 @@ TAG_RE = re.compile(r"<[^>]+>")
 HAS_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
 
 LABEL_TEMPLATES = {"lb", "lbl", "label", "labels", "tag", "tags"}
-LINK_TEMPLATES = {"l", "link", "m", "mention"}
+LINK_TEMPLATES = {"l", "link", "m", "mention", "w", "wp", "wikipedia"}
 DEFINITION_TEMPLATES = {
     "abbreviation of": "Abbreviation of {term}",
     "abbr of": "Abbreviation of {term}",
@@ -27,9 +27,17 @@ DEFINITION_TEMPLATES = {
     "alt form": "Alternative form of {term}",
     "alt form of": "Alternative form of {term}",
     "alternative spelling of": "Alternative spelling of {term}",
+    "alt spelling of": "Alternative spelling of {term}",
+    "alt sp": "Alternative spelling of {term}",
+    "alt sp of": "Alternative spelling of {term}",
+    "altsp": "Alternative spelling of {term}",
+    "alt spell": "Alternative spelling of {term}",
+    "alt spell of": "Alternative spelling of {term}",
     "alternative case form of": "Alternative case form of {term}",
     "alternative letter-case of": "Alternative letter-case of {term}",
     "alternative capitalization of": "Alternative capitalization of {term}",
+    "alt case": "Alternative case form of {term}",
+    "altform": "Alternative form of {term}",
     "contraction of": "Contraction of {term}",
     "clipping of": "Clipping of {term}",
     "comparative of": "Comparative of {term}",
@@ -43,9 +51,49 @@ DEFINITION_TEMPLATES = {
     "past participle of": "Past participle of {term}",
     "present participle of": "Present participle of {term}",
     "simple past of": "Simple past of {term}",
+    "obs form": "Obsolete form of {term}",
+    "obs sp": "Obsolete spelling of {term}",
+    "obs sp of": "Obsolete spelling of {term}",
+    "stand sp": "Standard spelling of {term}",
+    "standard sp": "Standard spelling of {term}",
+    "pron sp": "Pronunciation spelling of {term}",
+    "ellipsis of": "Ellipsis of {term}",
+    "only used in": "Only used in {term}",
     "short for": "Short for {term}",
     "form of": "Form of {term}",
     "inflection of": "Inflection of {term}",
+}
+NAME_TEMPLATES = {
+    "surname": "Surname",
+    "given name": "Given name",
+}
+PLACE_TEMPLATES = {"place"}
+QUALIFIER_TEMPLATES = {"q", "qual", "qualifier"}
+USAGE_TEMPLATES = {"ux", "uxi", "uxa"}
+QUOTE_TEMPLATES = {
+    "quote-book",
+    "quote-journal",
+    "quote-text",
+    "quote-web",
+    "quote-av",
+    "quote-song",
+    "quote-hansard",
+}
+NON_GLOSS_TEMPLATES = {"non-gloss", "ng", "ngd"}
+EMPTY_TEMPLATES = {"senseid", "sid"}
+PLACE_PREFIXES = ("c", "r", "s", "co", "par", "dist", "cc")
+PLACE_INLINE_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(prefix) for prefix in PLACE_PREFIXES) + r")/([^\s,;]+)",
+    re.IGNORECASE,
+)
+PLACE_NAMED_FIELDS = {
+    "caplc": "capital",
+    "capital": "capital",
+    "official": "official name",
+    "full": "full name",
+    "short": "short name",
+    "abbr": "abbreviation",
+    "seat": "seat",
 }
 
 
@@ -157,28 +205,175 @@ def _strip_wiki_prefix(text):
     return text
 
 
-def _render_template(content):
+def _parse_template(content):
     parts = _split_template_parts(content)
     if not parts:
-        return ""
+        return "", [], {}
     name = parts[0].strip().lower()
-    raw_params = []
+    positional = []
+    named = {}
     for param in parts[1:]:
-        if not param or "=" in param:
+        if not param:
             continue
-        raw_params.append(_expand_templates(param).strip())
-    params = [param for param in raw_params if param]
-    params = [param for param in params if param.lower() not in {"en", "eng", "english"}]
-    params = [_strip_wiki_prefix(param) for param in params]
+        if "=" in param:
+            key, value = param.split("=", 1)
+            key = key.strip().lower()
+            value = _expand_templates(value).strip()
+            if value:
+                named[key] = value
+        else:
+            value = _expand_templates(param).strip()
+            if value:
+                positional.append(value)
+    positional = [
+        param
+        for param in positional
+        if param.lower() not in {"en", "eng", "english"}
+    ]
+    positional = [_strip_wiki_prefix(param) for param in positional]
+    named = {key: _strip_wiki_prefix(value) for key, value in named.items() if value}
+    return name, positional, named
+
+
+def _normalize_place_param(param):
+    param = param.replace("<<", "").replace(">>", "")
+    param = param.strip()
+    if param.startswith("@"):
+        param = param[1:].strip()
+    lower = param.lower()
+    if lower.startswith("abbrev of:"):
+        param = f"abbreviation of {param.split(':', 1)[1].strip()}"
+    elif lower.startswith("abbrev of "):
+        param = f"abbreviation of {param[9:].strip()}"
+    elif lower.startswith("abbr of:"):
+        param = f"abbreviation of {param.split(':', 1)[1].strip()}"
+    elif lower.startswith("abbr of "):
+        param = f"abbreviation of {param[7:].strip()}"
+    lower = param.lower()
+    for prefix in PLACE_PREFIXES:
+        token = prefix + "/"
+        if lower.startswith(token):
+            value = param[len(token) :].strip()
+            if value:
+                return f"in {value.replace('_', ' ')}"
+    param = PLACE_INLINE_RE.sub(lambda match: match.group(1), param)
+    param = param.replace("/", " ")
+    param = param.replace("_", " ")
+    param = re.sub(r"\s+", " ", param).strip()
+    return param
+
+
+def _join_place_parts(parts):
+    if not parts:
+        return ""
+    combined = []
+    for part in parts:
+        if part == ";":
+            if combined:
+                combined[-1] = combined[-1].rstrip()
+            combined.append(";")
+        else:
+            combined.append(part)
+    text = " ".join(combined)
+    text = text.replace(" ;", ";")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _render_place_template(params, named):
+    parts = []
+    for param in params:
+        if not param:
+            continue
+        if param.strip() == ";":
+            parts.append(";")
+            continue
+        normalized = _normalize_place_param(param)
+        if normalized:
+            parts.append(normalized)
+    text = _join_place_parts(parts)
+    details = []
+    for key, label in PLACE_NAMED_FIELDS.items():
+        value = named.get(key)
+        if value:
+            cleaned = value.replace("_", " ").replace("<<", "").replace(">>", "").strip()
+            if cleaned:
+                details.append(f"{label}: {cleaned}")
+    if details:
+        details_text = "; ".join(details)
+        if text:
+            text = f"{text}; {details_text}"
+        else:
+            text = details_text
+    return text
+
+
+def _render_name_template(label, params, named):
+    details = []
+    if params:
+        details.extend(params)
+    origin = named.get("from") or named.get("origin")
+    if origin:
+        details.append(f"from {origin}")
+    meaning = named.get("meaning")
+    if meaning:
+        details.append(f"meaning {meaning}")
+    if details:
+        return f"{label} ({', '.join(details)})"
+    return label
+
+
+def _render_qualifier_template(params):
+    if not params:
+        return ""
+    return f"({', '.join(params)})"
+
+
+def _render_usage_template(params, named):
+    if params:
+        return params[0]
+    text = named.get("text") or named.get("passage") or named.get("quote")
+    return text or ""
+
+
+def _render_quote_template(params, named):
+    text = named.get("text") or named.get("passage") or named.get("quote")
+    if text:
+        return text
+    return ""
+
+
+def _render_template(content):
+    name, params, named = _parse_template(content)
+    if not name:
+        return ""
     if name in LABEL_TEMPLATES:
         if params:
             return f"({', '.join(params)})"
         return ""
     if name in LINK_TEMPLATES:
         return params[0] if params else ""
+    if name in EMPTY_TEMPLATES:
+        return ""
+    if name in QUALIFIER_TEMPLATES:
+        return _render_qualifier_template(params)
+    if name in NAME_TEMPLATES:
+        return _render_name_template(NAME_TEMPLATES[name], params, named)
+    if name in PLACE_TEMPLATES:
+        return _render_place_template(params, named)
+    if name in NON_GLOSS_TEMPLATES:
+        return params[0] if params else ""
+    if name in USAGE_TEMPLATES:
+        return _render_usage_template(params, named)
+    if name in QUOTE_TEMPLATES:
+        return _render_quote_template(params, named)
     if name in DEFINITION_TEMPLATES:
         if params:
-            return DEFINITION_TEMPLATES[name].format(term=params[0])
+            text = DEFINITION_TEMPLATES[name].format(term=params[0])
+            extras = [param for param in params[1:] if param]
+            if extras:
+                text = f"{text} ({'; '.join(extras)})"
+            return text
         return ""
     if name.endswith(" of") and params:
         return f"{name.title()} {params[0]}"
@@ -257,7 +452,8 @@ def extract_english_definitions(text):
 
 def parse_definitions(dump_path, target_words):
     definitions = {}
-    remaining = set(target_words)
+    targets = set(target_words)
+    seen = set()
     with bz2.open(dump_path, "rb") as handle:
         context = ET.iterparse(handle, events=("start", "end"))
         _, root = next(context)
@@ -271,10 +467,11 @@ def parse_definitions(dump_path, target_words):
                 continue
             title = title_elem.text.strip()
             key = title.lower()
-            if key not in remaining:
+            if key not in targets:
                 elem.clear()
                 root.clear()
                 continue
+            seen.add(key)
             text_elem = elem.find(".//{*}text")
             definitions_for_page = extract_english_definitions(text_elem.text or "")
             if definitions_for_page:
@@ -285,12 +482,10 @@ def parse_definitions(dump_path, target_words):
                             existing.append(definition)
                 else:
                     definitions[key] = definitions_for_page
-            remaining.discard(key)
             elem.clear()
             root.clear()
-            if not remaining:
-                break
-    return definitions, remaining
+    missing = targets - seen
+    return definitions, missing
 
 
 def write_output(output_path, words, definitions):
