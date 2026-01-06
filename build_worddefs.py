@@ -19,6 +19,7 @@ HAS_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
 
 LABEL_TEMPLATES = {"lb", "lbl", "label", "labels", "tag", "tags"}
 LINK_TEMPLATES = {"l", "link", "m", "mention", "w", "wp", "wikipedia"}
+LANGUAGE_TEMPLATES = {"lang"}
 DEFINITION_TEMPLATES = {
     "abbreviation of": "Abbreviation of {term}",
     "abbr of": "Abbreviation of {term}",
@@ -154,6 +155,7 @@ def _split_template_parts(content):
     parts = []
     current = []
     depth = 0
+    link_depth = 0
     idx = 0
     while idx < len(content):
         if content.startswith("{{", idx):
@@ -166,7 +168,17 @@ def _split_template_parts(content):
             current.append("}}")
             idx += 2
             continue
-        if content[idx] == "|" and depth == 0:
+        if content.startswith("[[", idx):
+            link_depth += 1
+            current.append("[[")
+            idx += 2
+            continue
+        if content.startswith("]]", idx) and link_depth:
+            link_depth -= 1
+            current.append("]]")
+            idx += 2
+            continue
+        if content[idx] == "|" and depth == 0 and link_depth == 0:
             parts.append("".join(current).strip())
             current = []
             idx += 1
@@ -308,6 +320,26 @@ def _render_place_template(params, named):
     return text
 
 
+def _render_label_template(params):
+    if not params:
+        return ""
+    groups = []
+    current = []
+    for param in params:
+        if param == "_":
+            if current:
+                groups.append(", ".join(current))
+                current = []
+            continue
+        current.append(param)
+    if current:
+        groups.append(", ".join(current))
+    if not groups:
+        return ""
+    label = "; ".join(groups)
+    return f"({label})"
+
+
 def _render_name_template(label, params, named):
     details = []
     if params:
@@ -348,11 +380,14 @@ def _render_template(content):
     if not name:
         return ""
     if name in LABEL_TEMPLATES:
-        if params:
-            return f"({', '.join(params)})"
-        return ""
+        return _render_label_template(params)
     if name in LINK_TEMPLATES:
         return params[0] if params else ""
+    if name in LANGUAGE_TEMPLATES:
+        if params:
+            return " ".join(params)
+        text = named.get("text") or named.get("passage")
+        return text or ""
     if name in EMPTY_TEMPLATES:
         return ""
     if name in QUALIFIER_TEMPLATES:
