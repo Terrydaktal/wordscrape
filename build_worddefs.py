@@ -24,6 +24,7 @@ DEFINITION_TEMPLATES = {
     "abbr of": "Abbreviation of {term}",
     "acronym of": "Acronym of {term}",
     "alternative form of": "Alternative form of {term}",
+    "alt form": "Alternative form of {term}",
     "alt form of": "Alternative form of {term}",
     "alternative spelling of": "Alternative spelling of {term}",
     "alternative case form of": "Alternative case form of {term}",
