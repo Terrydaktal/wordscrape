@@ -50,7 +50,9 @@ POS_MAP = {
     "proper noun": "proper noun",
 }
 FORM_OF_RE = re.compile(
-    r"^(plural|present participle|gerund|inflection|infl) of (.+?)(?:[.;]|$)",
+    r"^(plural|present participle|gerund|inflection|infl|past tense|past participle|"
+    r"simple past|simple past and past participle|third-person singular|"
+    r"third person singular) of (.+?)(?:[.;]|$)",
     re.IGNORECASE,
 )
 DEFINITION_TEMPLATES = {
@@ -93,6 +95,11 @@ DEFINITION_TEMPLATES = {
     "pron sp": "Pronunciation spelling of {term}",
     "ellipsis of": "Ellipsis of {term}",
     "only used in": "Only used in {term}",
+    "past tense of": "Past tense of {term}",
+    "past participle of": "Past participle of {term}",
+    "third-person singular of": "Third-person singular of {term}",
+    "third person singular of": "Third-person singular of {term}",
+    "simple past and past participle of": "Simple past and past participle of {term}",
     "short for": "Short for {term}",
     "form of": "Form of {term}",
     "inflection of": "Inflection of {term}",
@@ -117,6 +124,7 @@ QUOTE_TEMPLATES = {
 NON_GLOSS_TEMPLATES = {"non-gloss", "ng", "ngd"}
 EMPTY_TEMPLATES = {"senseid", "sid"}
 PLACE_PREFIXES = ("c", "r", "s", "co", "par", "dist", "cc")
+TAXON_TEMPLATES = {"taxon"}
 PLACE_INLINE_RE = re.compile(
     r"\b(?:" + "|".join(re.escape(prefix) for prefix in PLACE_PREFIXES) + r")/([^\s,;]+)",
     re.IGNORECASE,
@@ -409,6 +417,24 @@ def _render_quote_template(params, named):
     return ""
 
 
+def _render_taxon_template(params):
+    if not params:
+        return "A taxonomic entity."
+    rank = params[0]
+    parent_rank = params[1] if len(params) > 1 else ""
+    parent_name = params[2] if len(params) > 2 else ""
+    description = params[3] if len(params) > 3 else ""
+    parts = [f"A taxonomic {rank}"]
+    if parent_rank and parent_name:
+        parts.append(f"within the {parent_rank} {parent_name}")
+    text = " ".join(parts)
+    if description:
+        description = description.lstrip("–- ").strip()
+        if description:
+            text = f"{text} – {description}"
+    return f"{text}."
+
+
 def _render_template(content):
     name, params, named = _parse_template(content)
     if not name:
@@ -430,6 +456,8 @@ def _render_template(content):
         return _render_name_template(NAME_TEMPLATES[name], params, named)
     if name in PLACE_TEMPLATES:
         return _render_place_template(params, named)
+    if name in TAXON_TEMPLATES:
+        return _render_taxon_template(params)
     if name in NON_GLOSS_TEMPLATES:
         return params[0] if params else ""
     if name in USAGE_TEMPLATES:
@@ -518,9 +546,19 @@ def _extract_form_of_base(word, text):
     if not lemma:
         return None
     if form_type in {"inflection", "infl"}:
-        if not word.endswith("ing"):
+        if word.endswith("ing"):
+            form_type = "present participle"
+        elif word.endswith("ed"):
+            form_type = "past tense"
+        elif word.endswith("s"):
+            form_type = "third-person singular"
+        else:
             return None
-        form_type = "present participle"
+    if form_type in {"past tense", "past participle", "simple past"} and not word.endswith("ed"):
+        # Keep irregular past forms unless explicitly requested in the word list.
+        return None
+    if form_type == "third-person singular" and not word.endswith("s"):
+        return None
     return form_type, lemma.lower()
 
 
