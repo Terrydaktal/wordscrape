@@ -20,6 +20,39 @@ HAS_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
 LABEL_TEMPLATES = {"lb", "lbl", "label", "labels", "tag", "tags"}
 LINK_TEMPLATES = {"l", "link", "m", "mention", "w", "wp", "wikipedia"}
 LANGUAGE_TEMPLATES = {"lang"}
+TARGET_LANGUAGES = {"english", "translingual"}
+POS_MAP = {
+    "noun": "noun",
+    "proper noun": "proper noun",
+    "verb": "verb",
+    "adjective": "adjective",
+    "adverb": "adverb",
+    "pronoun": "pronoun",
+    "determiner": "determiner",
+    "article": "article",
+    "preposition": "preposition",
+    "conjunction": "conjunction",
+    "interjection": "interjection",
+    "particle": "particle",
+    "numeral": "numeral",
+    "symbol": "symbol",
+    "letter": "letter",
+    "prefix": "prefix",
+    "suffix": "suffix",
+    "infix": "infix",
+    "circumfix": "circumfix",
+    "abbreviation": "abbreviation",
+    "acronym": "acronym",
+    "initialism": "initialism",
+    "phrase": "phrase",
+    "proverb": "proverb",
+    "idiom": "idiom",
+    "proper noun": "proper noun",
+}
+FORM_OF_RE = re.compile(
+    r"^(plural|present participle|gerund|inflection|infl) of (.+?)(?:[.;]|$)",
+    re.IGNORECASE,
+)
 DEFINITION_TEMPLATES = {
     "abbreviation of": "Abbreviation of {term}",
     "abbr of": "Abbreviation of {term}",
@@ -63,6 +96,7 @@ DEFINITION_TEMPLATES = {
     "short for": "Short for {term}",
     "form of": "Form of {term}",
     "inflection of": "Inflection of {term}",
+    "infl of": "Inflection of {term}",
 }
 NAME_TEMPLATES = {
     "surname": "Surname",
@@ -458,20 +492,68 @@ def _heading_level(line):
     return len(match.group(1)), match.group(2).strip()
 
 
-def extract_english_definitions(text):
+def _normalize_heading(heading):
+    return re.sub(r"\s+", " ", heading.strip()).lower()
+
+
+def _strip_leading_labels(text):
+    stripped = text
+    while True:
+        match = re.match(r"^\([^)]*\)\s*", stripped)
+        if not match:
+            break
+        stripped = stripped[match.end() :]
+    return stripped
+
+
+def _extract_form_of_base(word, text):
+    stripped = _strip_leading_labels(text)
+    match = FORM_OF_RE.match(stripped)
+    if not match:
+        return None
+    form_type = match.group(1).lower()
+    lemma = match.group(2).strip()
+    lemma = re.split(r"\s*(?:\(|,|;)", lemma, 1)[0].strip()
+    lemma = lemma.strip(" .")
+    if not lemma:
+        return None
+    if form_type in {"inflection", "infl"}:
+        if not word.endswith("ing"):
+            return None
+        form_type = "present participle"
+    return form_type, lemma.lower()
+
+
+def _extract_transitivity(text):
+    match = re.match(r"^\(([^)]*)\)\s*", text)
+    if not match:
+        return None
+    label = match.group(1).lower()
+    flags = []
+    for flag in ("transitive", "intransitive", "ditransitive"):
+        if flag in label:
+            flags.append(flag)
+    if not flags:
+        return None
+    return ", ".join(flags)
+
+
+def extract_definitions(text):
     definitions = []
-    in_english = False
+    current_language = None
+    current_pos = None
     for line in text.splitlines():
         level, heading = _heading_level(line)
         if level == 2:
-            if heading.lower() == "english":
-                in_english = True
-            else:
-                if in_english:
-                    break
-                in_english = False
+            current_language = _normalize_heading(heading)
+            current_pos = None
             continue
-        if not in_english:
+        if current_language not in TARGET_LANGUAGES:
+            continue
+        if level is not None and level >= 3:
+            heading_key = _normalize_heading(heading)
+            if heading_key in POS_MAP:
+                current_pos = POS_MAP[heading_key]
             continue
         match = DEF_LINE_RE.match(line)
         if not match:
@@ -480,13 +562,27 @@ def extract_english_definitions(text):
         if not content or content.startswith(("*", ":")):
             continue
         cleaned = _clean_wikitext(content)
-        if cleaned and HAS_ALNUM_RE.search(cleaned) and cleaned not in definitions:
-            definitions.append(cleaned)
+        if not cleaned or not HAS_ALNUM_RE.search(cleaned):
+            continue
+        pos_label = current_pos or "unknown"
+        entry = (current_language, pos_label, cleaned)
+        if entry not in definitions:
+            definitions.append(entry)
     return definitions
 
 
-def parse_definitions(dump_path, target_words):
-    definitions = {}
+def parse_definitions(
+    dump_path,
+    target_words,
+    *,
+    definitions=None,
+    form_of_map=None,
+    extra_targets=None,
+):
+    if definitions is None:
+        definitions = {}
+    if form_of_map is None:
+        form_of_map = {}
     targets = set(target_words)
     seen = set()
     with bz2.open(dump_path, "rb") as handle:
@@ -508,7 +604,7 @@ def parse_definitions(dump_path, target_words):
                 continue
             seen.add(key)
             text_elem = elem.find(".//{*}text")
-            definitions_for_page = extract_english_definitions(text_elem.text or "")
+            definitions_for_page = extract_definitions(text_elem.text or "")
             if definitions_for_page:
                 existing = definitions.get(key)
                 if existing:
@@ -516,18 +612,38 @@ def parse_definitions(dump_path, target_words):
                         if definition not in existing:
                             existing.append(definition)
                 else:
-                    definitions[key] = definitions_for_page
+                    definitions[key] = list(definitions_for_page)
+                if extra_targets is not None:
+                    for _, _, definition in definitions_for_page:
+                        form_of = _extract_form_of_base(key, definition)
+                        if not form_of:
+                            continue
+                        _, base = form_of
+                        form_of_map.setdefault(key, set()).add(base)
+                        if base not in targets:
+                            extra_targets.add(base)
+                            targets.add(base)
             elem.clear()
             root.clear()
-    missing = targets - seen
-    return definitions, missing
+    return definitions, seen
 
 
 def write_output(output_path, words, definitions):
     lines = []
     for word in words:
         defs = definitions.get(word, [])
-        fields = [word] + defs
+        fields = [word]
+        for language, pos, text in defs:
+            pos_label = pos
+            if pos_label == "verb":
+                transitivity = _extract_transitivity(text)
+                if transitivity:
+                    pos_label = f"verb ({transitivity})"
+            if language != "english":
+                prefix = f"{language} {pos_label}"
+            else:
+                prefix = pos_label
+            fields.append(f"{prefix}: {text}")
         lines.append(" | ".join(fields))
     Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -545,12 +661,50 @@ def main():
     words = load_wordfreq_words(wordfreq_path)
     if not words:
         raise SystemExit(f"No words found in {wordfreq_path}")
-    definitions, remaining = parse_definitions(dump_path, set(words))
-    write_output(args.output, words, definitions)
+    targets = set(words)
+    form_of_map = {}
+    extra_targets = set()
+    definitions, seen = parse_definitions(
+        dump_path,
+        targets,
+        definitions=None,
+        form_of_map=form_of_map,
+        extra_targets=extra_targets,
+    )
+    if extra_targets:
+        missing_extra = extra_targets - seen
+        if missing_extra:
+            definitions, extra_seen = parse_definitions(
+                dump_path,
+                missing_extra,
+                definitions=definitions,
+                form_of_map=form_of_map,
+                extra_targets=None,
+            )
+            seen |= extra_seen
+
+    output_words = []
+    output_seen = set()
+    for word in words:
+        base = None
+        if word in form_of_map and form_of_map[word]:
+            base = sorted(form_of_map[word])[0]
+        if base:
+            if base not in output_seen:
+                output_words.append(base)
+                output_seen.add(base)
+            continue
+        if word not in output_seen:
+            output_words.append(word)
+            output_seen.add(word)
+
+    write_output(args.output, output_words, definitions)
+    all_targets = targets | extra_targets
+    missing = all_targets - seen
     found = len(definitions)
-    print(f"Wrote {len(words)} words to {args.output}")
-    if remaining:
-        print(f"Missing pages for {len(remaining)} words")
+    print(f"Wrote {len(output_words)} words to {args.output}")
+    if missing:
+        print(f"Missing pages for {len(missing)} words")
     print(f"Found definitions for {found} words")
     return 0
 
