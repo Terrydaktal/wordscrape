@@ -17,7 +17,7 @@ WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 TAG_RE = re.compile(r"<[^>]+>")
 HAS_ALNUM_RE = re.compile(r"[A-Za-z0-9]")
 
-LABEL_TEMPLATES = {"lb", "lbl", "label", "labels", "tag", "tags"}
+LABEL_TEMPLATES = {"lb", "lbl", "label", "labels", "tag", "tags", "u"}
 LINK_TEMPLATES = {"l", "link", "m", "mention", "w", "wp", "wikipedia"}
 LANGUAGE_TEMPLATES = {"lang"}
 TARGET_LANGUAGES = {"english", "translingual"}
@@ -95,6 +95,7 @@ DEFINITION_TEMPLATES = {
     "pron sp": "Pronunciation spelling of {term}",
     "ellipsis of": "Ellipsis of {term}",
     "only used in": "Only used in {term}",
+    "cap": "Capitalized form of {term}",
     "past tense of": "Past tense of {term}",
     "past participle of": "Past participle of {term}",
     "third-person singular of": "Third-person singular of {term}",
@@ -121,10 +122,20 @@ QUOTE_TEMPLATES = {
     "quote-song",
     "quote-hansard",
 }
-NON_GLOSS_TEMPLATES = {"non-gloss", "ng", "ngd"}
+NON_GLOSS_TEMPLATES = {"non-gloss", "ng", "ngd", "n-g"}
 EMPTY_TEMPLATES = {"senseid", "sid"}
 PLACE_PREFIXES = ("c", "r", "s", "co", "par", "dist", "cc")
 TAXON_TEMPLATES = {"taxon"}
+RELATION_TEMPLATES = {"syn", "hol", "mer"}
+ISO_639_TEMPLATES = {"iso 639"}
+ISO_3166_TEMPLATES = {"iso 3166"}
+ISO_4217_TEMPLATES = {"iso 4217"}
+SI_UNIT_TEMPLATES = {"si-unit"}
+SI_UNIT_ABB_TEMPLATES = {"si-unit-abb"}
+ALT_FORM_TEMPLATES = {"alti"}
+NAME_TRANSLIT_TEMPLATES = {"name translit"}
+TAXLINK_TEMPLATES = {"taxlink"}
+TAXFMT_TEMPLATES = {"taxfmt"}
 PLACE_INLINE_RE = re.compile(
     r"\b(?:" + "|".join(re.escape(prefix) for prefix in PLACE_PREFIXES) + r")/([^\s,;]+)",
     re.IGNORECASE,
@@ -259,6 +270,140 @@ def _strip_wiki_prefix(text):
     return text
 
 
+def _strip_template_annotations(text):
+    text = re.sub(r"<[^>]+>", "", text)
+    return text.strip()
+
+
+def _strip_lang_prefix(text):
+    if ":" not in text:
+        return text
+    prefix, rest = text.split(":", 1)
+    if len(prefix) <= 4:
+        return rest
+    return text
+
+
+def _clean_relation_term(term):
+    term = _strip_template_annotations(term)
+    term = _strip_lang_prefix(term)
+    term = WIKILINK_PIPED_RE.sub(r"\2", term)
+    term = WIKILINK_RE.sub(r"\1", term)
+    if "#" in term:
+        term = term.split("#", 1)[0]
+    term = term.replace("_", " ")
+    if term.lower().startswith("thesaurus:"):
+        term = term.split(":", 1)[1]
+    return term.strip()
+
+
+def _render_relation_template(kind, params):
+    terms = []
+    for param in params:
+        if param in {";", "<", ">", "|", ","}:
+            continue
+        cleaned = _clean_relation_term(param)
+        if cleaned:
+            terms.append(cleaned)
+    if not terms:
+        return ""
+    label = {
+        "syn": "Synonyms",
+        "hol": "Holonyms",
+        "mer": "Meronyms",
+    }.get(kind, "Related terms")
+    if len(terms) == 1:
+        return f"{label[:-1]}: {terms[0]}"
+    return f"{label}: {', '.join(terms)}"
+
+
+def _render_iso_639_template(params):
+    if not params:
+        return "ISO 639 language code."
+    code = _clean_relation_term(params[0])
+    return f"ISO 639-{code} language code."
+
+
+def _render_iso_3166_template(params):
+    if len(params) >= 3:
+        part = _clean_relation_term(params[0])
+        alpha = _clean_relation_term(params[1])
+        country = _clean_relation_term(params[2])
+        return f"ISO 3166-{part} alpha-{alpha} code for {country}."
+    if len(params) >= 2:
+        part = _clean_relation_term(params[0])
+        alpha = _clean_relation_term(params[1])
+        return f"ISO 3166-{part} alpha-{alpha} code."
+    return "ISO 3166 country code."
+
+
+def _render_iso_4217_template(params):
+    if len(params) >= 1:
+        code = _clean_relation_term(params[0])
+        return f"ISO 4217 currency code {code}."
+    return "ISO 4217 currency code."
+
+
+def _render_si_unit_template(params):
+    if not params:
+        return "SI unit."
+    prefix = _clean_relation_term(params[0]) if len(params) > 1 else ""
+    base = _clean_relation_term(params[1]) if len(params) > 1 else _clean_relation_term(params[0])
+    quantity = _clean_relation_term(params[2]) if len(params) > 2 else ""
+    unit = f"{prefix}{base}" if prefix else base
+    text = f"SI unit {unit}" if unit else "SI unit"
+    if quantity:
+        text = f"{text} ({quantity})"
+    return f"{text}."
+
+
+def _render_si_unit_abb_template(params):
+    if not params:
+        return "SI unit symbol."
+    prefix = _clean_relation_term(params[0]) if len(params) > 1 else ""
+    base = _clean_relation_term(params[1]) if len(params) > 1 else _clean_relation_term(params[0])
+    quantity = _clean_relation_term(params[2]) if len(params) > 2 else ""
+    unit = f"{prefix}{base}" if prefix else base
+    text = f"SI unit symbol for {unit}" if unit else "SI unit symbol"
+    if quantity:
+        text = f"{text} ({quantity})"
+    return f"{text}."
+
+
+def _render_alti_template(params):
+    if not params:
+        return "Alternative forms."
+    forms = []
+    for param in params:
+        if param in {";", "<", ">", "|", ","}:
+            continue
+        cleaned = _clean_relation_term(param)
+        cleaned = cleaned.replace(" ", "")
+        if cleaned:
+            forms.append(cleaned)
+    if not forms:
+        return "Alternative forms."
+    return f"Alternative forms: {', '.join(forms)}"
+
+
+def _render_name_translit_template(params, named):
+    name = _clean_relation_term(params[-1]) if params else ""
+    kind = _clean_relation_term(named.get("type", ""))
+    addl = _clean_relation_term(named.get("addl", ""))
+    if name:
+        base = f"Transliteration of {name}"
+    else:
+        base = "Transliteration"
+    details = []
+    if kind:
+        details.append(kind)
+    if addl:
+        details.append(addl)
+    if details:
+        return f"{base} ({'; '.join(details)})"
+    return base
+
+
 def _parse_template(content):
     parts = _split_template_parts(content)
     if not parts:
@@ -382,6 +527,13 @@ def _render_label_template(params):
     return f"({label})"
 
 
+def _render_usage_label(params):
+    label = _render_label_template(params).strip("()")
+    if not label:
+        return ""
+    return f"Used {label}."
+
+
 def _render_name_template(label, params, named):
     details = []
     if params:
@@ -414,7 +566,13 @@ def _render_quote_template(params, named):
     text = named.get("text") or named.get("passage") or named.get("quote")
     if text:
         return text
-    return ""
+    title = named.get("title")
+    author = named.get("author")
+    if title and author:
+        return f"Quotation from {title} by {author}."
+    if title:
+        return f"Quotation from {title}."
+    return "Quotation."
 
 
 def _render_taxon_template(params):
@@ -435,10 +593,32 @@ def _render_taxon_template(params):
     return f"{text}."
 
 
+def _render_taxlink_template(params):
+    if not params:
+        return "Taxon."
+    name = _clean_relation_term(params[0])
+    rank = _clean_relation_term(params[1]) if len(params) > 1 else ""
+    if rank:
+        return f"Taxon {name} ({rank})."
+    return f"Taxon {name}."
+
+
+def _render_taxfmt_template(params):
+    if not params:
+        return "Taxon."
+    name = _clean_relation_term(params[0])
+    rank = _clean_relation_term(params[1]) if len(params) > 1 else ""
+    if rank:
+        return f"Taxon {name} ({rank})."
+    return f"Taxon {name}."
+
+
 def _render_template(content):
     name, params, named = _parse_template(content)
     if not name:
         return ""
+    if name == "u":
+        return _render_usage_label(params)
     if name in LABEL_TEMPLATES:
         return _render_label_template(params)
     if name in LINK_TEMPLATES:
@@ -458,6 +638,26 @@ def _render_template(content):
         return _render_place_template(params, named)
     if name in TAXON_TEMPLATES:
         return _render_taxon_template(params)
+    if name in TAXLINK_TEMPLATES:
+        return _render_taxlink_template(params)
+    if name in TAXFMT_TEMPLATES:
+        return _render_taxfmt_template(params)
+    if name in RELATION_TEMPLATES:
+        return _render_relation_template(name, params)
+    if name in ISO_639_TEMPLATES:
+        return _render_iso_639_template(params)
+    if name in ISO_3166_TEMPLATES:
+        return _render_iso_3166_template(params)
+    if name in ISO_4217_TEMPLATES:
+        return _render_iso_4217_template(params)
+    if name in SI_UNIT_TEMPLATES:
+        return _render_si_unit_template(params)
+    if name in SI_UNIT_ABB_TEMPLATES:
+        return _render_si_unit_abb_template(params)
+    if name in ALT_FORM_TEMPLATES:
+        return _render_alti_template(params)
+    if name in NAME_TRANSLIT_TEMPLATES:
+        return _render_name_translit_template(params, named)
     if name in NON_GLOSS_TEMPLATES:
         return params[0] if params else ""
     if name in USAGE_TEMPLATES:
