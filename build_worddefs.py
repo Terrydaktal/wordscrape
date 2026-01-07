@@ -710,7 +710,7 @@ def main():
         extra_targets=extra_targets,
     )
     if extra_targets:
-        missing_extra = extra_targets - seen
+        missing_extra = extra_targets - set(definitions)
         if missing_extra:
             definitions, extra_seen = parse_definitions(
                 dump_path,
