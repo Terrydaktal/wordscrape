@@ -55,6 +55,10 @@ FORM_OF_RE = re.compile(
     r"third person singular) of (.+?)(?:[.;]|$)",
     re.IGNORECASE,
 )
+ALT_VARIANT_RE = re.compile(
+    r"^(alternate|alternative) (spelling|form) of (.+?)(?:[.;]|$)",
+    re.IGNORECASE,
+)
 DEFINITION_TEMPLATES = {
     "abbreviation of": "Abbreviation of {term}",
     "abbr of": "Abbreviation of {term}",
@@ -762,6 +766,19 @@ def _extract_form_of_base(word, text):
     return form_type, lemma.lower()
 
 
+def _extract_alt_variant_base(text):
+    stripped = _strip_leading_labels(text)
+    match = ALT_VARIANT_RE.match(stripped)
+    if not match:
+        return None
+    lemma = match.group(3).strip()
+    lemma = re.split(r"\s*(?:\(|,|;|:)", lemma, 1)[0].strip()
+    lemma = lemma.strip(" .")
+    if not lemma:
+        return None
+    return lemma.lower()
+
+
 def _extract_transitivity(text):
     match = re.match(r"^\(([^)]*)\)\s*", text)
     if not match:
@@ -815,12 +832,18 @@ def parse_definitions(
     *,
     definitions=None,
     form_of_map=None,
+    alt_variant_map=None,
+    alt_spellings_by_base=None,
     extra_targets=None,
 ):
     if definitions is None:
         definitions = {}
     if form_of_map is None:
         form_of_map = {}
+    if alt_variant_map is None:
+        alt_variant_map = {}
+    if alt_spellings_by_base is None:
+        alt_spellings_by_base = {}
     targets = set(target_words)
     seen = set()
     with bz2.open(dump_path, "rb") as handle:
@@ -844,15 +867,31 @@ def parse_definitions(
             text_elem = elem.find(".//{*}text")
             definitions_for_page = extract_definitions(text_elem.text or "")
             if definitions_for_page:
+                filtered_definitions = []
+                for definition in definitions_for_page:
+                    _, _, definition_text = definition
+                    alt_base = _extract_alt_variant_base(definition_text)
+                    if alt_base:
+                        alt_variant_map.setdefault(key, set()).add(alt_base)
+                        alt_spellings_by_base.setdefault(alt_base, set()).add(key)
+                        if extra_targets is not None and alt_base not in targets:
+                            extra_targets.add(alt_base)
+                            targets.add(alt_base)
+                        continue
+                    filtered_definitions.append(definition)
+                if not filtered_definitions:
+                    elem.clear()
+                    root.clear()
+                    continue
                 existing = definitions.get(key)
                 if existing:
-                    for definition in definitions_for_page:
+                    for definition in filtered_definitions:
                         if definition not in existing:
                             existing.append(definition)
                 else:
-                    definitions[key] = list(definitions_for_page)
+                    definitions[key] = list(filtered_definitions)
                 if extra_targets is not None:
-                    for _, _, definition in definitions_for_page:
+                    for _, _, definition in filtered_definitions:
                         form_of = _extract_form_of_base(key, definition)
                         if not form_of:
                             continue
@@ -866,7 +905,9 @@ def parse_definitions(
     return definitions, seen
 
 
-def write_output(output_path, words, definitions):
+def write_output(output_path, words, definitions, alt_spellings_by_base=None):
+    if alt_spellings_by_base is None:
+        alt_spellings_by_base = {}
     lines = []
     for word in words:
         defs = definitions.get(word, [])
@@ -882,6 +923,13 @@ def write_output(output_path, words, definitions):
             else:
                 prefix = pos_label
             fields.append(f"{prefix}: {text}")
+        alt_spellings = sorted(alt_spellings_by_base.get(word, set()))
+        if alt_spellings:
+            suffix = f"(alternate spellings: {', '.join(alt_spellings)})"
+            if len(fields) > 1:
+                fields[-1] = f"{fields[-1]} {suffix}"
+            else:
+                fields.append(suffix)
         lines.append(" | ".join(fields))
     Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -901,12 +949,16 @@ def main():
         raise SystemExit(f"No words found in {wordfreq_path}")
     targets = set(words)
     form_of_map = {}
+    alt_variant_map = {}
+    alt_spellings_by_base = {}
     extra_targets = set()
     definitions, seen = parse_definitions(
         dump_path,
         targets,
         definitions=None,
         form_of_map=form_of_map,
+        alt_variant_map=alt_variant_map,
+        alt_spellings_by_base=alt_spellings_by_base,
         extra_targets=extra_targets,
     )
     if extra_targets:
@@ -917,6 +969,8 @@ def main():
                 missing_extra,
                 definitions=definitions,
                 form_of_map=form_of_map,
+                alt_variant_map=alt_variant_map,
+                alt_spellings_by_base=alt_spellings_by_base,
                 extra_targets=None,
             )
             seen |= extra_seen
@@ -932,11 +986,20 @@ def main():
                 output_words.append(base)
                 output_seen.add(base)
             continue
+        if word in alt_variant_map and alt_variant_map[word]:
+            alt_base = sorted(alt_variant_map[word])[0]
+            if alt_base not in output_seen:
+                output_words.append(alt_base)
+                output_seen.add(alt_base)
+            if definitions.get(word) and word not in output_seen:
+                output_words.append(word)
+                output_seen.add(word)
+            continue
         if word not in output_seen:
             output_words.append(word)
             output_seen.add(word)
 
-    write_output(args.output, output_words, definitions)
+    write_output(args.output, output_words, definitions, alt_spellings_by_base)
     all_targets = targets | extra_targets
     missing = all_targets - seen
     found = len(definitions)
