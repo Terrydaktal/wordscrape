@@ -1,19 +1,38 @@
-# Environments and caches
+## Python environments and tools
 .venv/
-__pycache__/
-*.pyc
+venv/
+ENV/
+env/
 
-# Generated outputs and logs
-*.log
+## Bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+.mypy_cache/
+.pytest_cache/
+pip-wheel-metadata/
+build/
+dist/
+
+## Generated data and caches
+ocr_run.log
 ocr_word_map.json
+pageviews_cache.json
+wordfreqs.txt
 words.txt
 test_words.txt
+test_chat/
 
-# Generated wordlists and data dumps
+## Wiktionary/WordNet dumps and outputs
 wordnet.txt
 wiktionary_english_titles.txt
 wiktionary_english_words.txt
 enwiktionary-latest-pages-articles-multistream.xml.bz2
 
-# Sample exports
-test_chat/
+## Logs
+*.log
+
+## Misc
+*.swp
+*.swo
+*.DS_Store
