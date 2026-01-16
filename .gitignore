@@ -36,7 +36,8 @@ enwiktionary-latest-pages-articles-multistream.xml.bz2
 *.swp
 *.swo
 *.DS_Store
-GoogleNgram/
+GoogleNgram/google_master_freqs.txt
+GoogleNgram/*.gz
 wiktionary/wiktionary_pageviews.txt
 telegram/scrapedwords.txt
 telegram/worddefs.txt

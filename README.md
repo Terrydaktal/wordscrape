@@ -49,7 +49,10 @@ To process a new Telegram chat export, follow these steps in order.
 ### 2. Initial Setup (Reference Data)
 Before processing a chat, you must generate the master reference lists. This typically only needs to be done once.
 
-1.  **Google Ngram Data**: Ensure `GoogleNgram/google_master_freqs.txt` exists (this is a large 7.9M word frequency list).
+1.  **Google Ngram Data**: Download the large 7.9M word frequency list.
+    ```bash
+    python3 GoogleNgram/fetch_google_freqs.py
+    ```
 2.  **Wiktionary List**: Download the latest dump and extract English titles.
     ```bash
     python3 wiktionary/extract_english_titles.py  # This will download the ~1GB XML dump automatically
