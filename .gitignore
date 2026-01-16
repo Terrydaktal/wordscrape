@@ -36,3 +36,10 @@ enwiktionary-latest-pages-articles-multistream.xml.bz2
 *.swp
 *.swo
 *.DS_Store
+GoogleNgram/
+wiktionary/wiktionary_pageviews.txt
+telegram/scrapedwords.txt
+telegram/worddefs.txt
+telegram/worddefswordsonly.txt
+telegram/wordfreqs.txt
+telegram/discarded_words.txt
