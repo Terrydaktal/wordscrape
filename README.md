@@ -9,6 +9,7 @@ A multi-stage pipeline for extracting unique vocabulary from Telegram chat expor
 ├── telegram/                         # PHASE 1 & 2: Sourcing & Ranking
 │   ├── tg_word_scrape.py             # Scrape words from HTML exports + OCR
 │   ├── generate_freqs.py             # Filter outliers and rank by rarity/popularity
+│   ├── score_discarded.py            # AI-based validation of discarded words
 │   ├── wiktionary_define_and_collapse.py # Build offline dictionary from XML dump
 │   ├── extract_words.py              # Utility: Strip definitions from output
 │   ├── scrapedwords.txt              # Raw unique words from chat
@@ -16,7 +17,8 @@ A multi-stage pipeline for extracting unique vocabulary from Telegram chat expor
 │   ├── worddefs.txt                  # Final dictionary (word | definitions)
 │   ├── worddefswordsonly.txt         # Plain list of words with definitions
 │   ├── ocr_word_map.json             # Links words to their image sources
-│   └── discarded_words.txt           # Words removed during filtering
+│   ├── discarded_words.txt           # Words removed during filtering
+│   └── discarded_words_assessed.txt  # State file for AI scoring results
 ├── wiktionary/                       # MASTER REFERENCE DATA
 │   ├── get_pageviews.py              # Script to build master pageview database
 │   ├── wiktionary_pageviews.txt      # Cumulative pageview data (resumable)
@@ -96,6 +98,13 @@ Build the final offline dictionary (`telegram/worddefs.txt`) by extracting defin
 python3 telegram/wiktionary_define_and_collapse.py
 ```
 This script uses a cache (`wiktionary/wiktionary_definitions.txt`) to make subsequent runs nearly instantaneous.
+
+#### D. AI Validation (Optional)
+Use an LLM (Gemini/Gemma) to double-check words discarded during filtering (`discarded_words.txt`) to ensure no rare valid words were missed.
+```bash
+python3 telegram/score_discarded.py --auto-loop
+```
+This creates `telegram/discarded_words_assessed.txt`, scoring each word (0.0 to 1.0) and providing reasoning based on presence in major dictionaries (OED, Webster's, etc.). It is resumable and stateful.
 
 ---
 
