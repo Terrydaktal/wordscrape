@@ -169,9 +169,15 @@ def main():
     parser.add_argument("--master-list", default=str(root_dir / "GoogleNgram" / "google_master_freqs.txt"))
     parser.add_argument("--pageviews-file", default=str(root_dir / "wiktionary" / "wiktionary_pageviews.txt"))
     
+    # Filtering Criteria Flags
+    parser.add_argument("--wiki", action="store_true", help="Filter using Wiktionary English word list.")
+    parser.add_argument("--wordnet", action="store_true", help="Filter using WordNet word list.")
+    parser.add_argument("--zipf", action="store_true", help="Filter using Zipf frequency (>0).")
+    parser.add_argument("--ngram", action="store_true", help="Filter using Google Ngram frequencies (>0).")
+    parser.add_argument("--pageviews", action="store_true", help="Filter using Wiktionary pageview counts (>0).")
+    
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--all", action="store_true", help="Keep all words from the scrape.")
-    group.add_argument("--wiktionary", action="store_true", help="Keep only words on the Wiktionary list.")
     group.add_argument("--strict", action="store_true", help="Only keep words found in reference lists (no API-only words).")
     
     parser.add_argument("--pageviews-months", type=int, default=0)
@@ -206,38 +212,44 @@ def main():
     final_words = set()
     discarded_words = set()
 
+    # Determine which filters are active
+    active_filters = {
+        "wiki": args.wiki,
+        "wordnet": args.wordnet,
+        "zipf": args.zipf,
+        "ngram": args.ngram,
+        "pageviews": args.pageviews
+    }
+    # If no specific filters are requested, default to all of them
+    if not any(active_filters.values()) and not args.all:
+        for k in active_filters: active_filters[k] = True
+
     if args.all:
         print("Mode: --all. Keeping all words.")
         final_words = scraped_words
-    elif args.wiktionary:
-        print("Mode: --wiktionary. Keeping only words on Wiktionary list.")
-        final_words = scraped_words & w_list
-        discarded_words = scraped_words - final_words
     else:
-        print("Mode: Default. Keeping words on Wiktionary, WordNet, Zipf, Ngram, or with pageviews.")
+        filter_names = [k for k, v in active_filters.items() if v]
+        print(f"Mode: Filtering. Active criteria: {', '.join(filter_names)}")
+        if args.strict: print("Strict mode enabled: API checks disabled for unknown words.")
+
         for w in scraped_words:
             is_valid = False
-            # Check local reference lists first
-            if w in w_list or w in n_list:
+            
+            if active_filters["wiki"] and w in w_list:
                 is_valid = True
-            elif zipf_frequency and zipf_frequency(w, "en") > 0:
+            elif active_filters["wordnet"] and w in n_list:
                 is_valid = True
-            elif master_freqs.get(w, 0) > 0:
+            elif active_filters["zipf"] and zipf_frequency and zipf_frequency(w, "en") > 0:
                 is_valid = True
-            elif pv_cache.get(w, 0) > 0:
+            elif active_filters["ngram"] and master_freqs.get(w, 0) > 0:
+                is_valid = True
+            elif active_filters["pageviews"] and pv_cache.get(w, 0) > 0:
                 is_valid = True
             
-            # If still not valid and not in strict mode, we will let fetch_pageviews decide later
-            # but we need to include them in final_words now so they ARE checked.
-            # However, to avoid checking every single typo, we only do this if it's NOT strict.
-            if not is_valid and not args.strict:
-                # We'll assume it might be valid and let fetch_pageviews verify it.
-                # If fetch_pageviews returns 0, it won't be very useful, but it will be in the list.
-                # To be safe and avoid junk, maybe we ONLY include if it's already in pv_cache
-                # OR if it's "reasonably" likely to be a word.
-                # Let's stick to the user's request: "has a pageview count"
-                # If it's not in cache, we don't know yet.
-                is_valid = True # Be inclusive as requested
+            # If not in local lists but we want to check pageviews API
+            if not is_valid and active_filters["pageviews"] and not args.strict:
+                # We'll include it for the API fetch later
+                is_valid = True
             
             if is_valid:
                 final_words.add(w)
@@ -254,14 +266,18 @@ def main():
     pageviews = fetch_pageviews(final_words, args, Path(args.pageviews_file), valid_word_list=w_list)
     
     # Post-fetch filtering: if it was only included for checking and it has 0 pageviews
-    # AND it's not in any other local lists, we discard it now.
-    if not (args.all or args.wiktionary):
+    # AND it's not in any other active local lists, we discard it now.
+    if not args.all:
         filtered_final = []
         for w in final_words:
-            if (w in w_list or w in n_list or 
-                (zipf_frequency and zipf_frequency(w, "en") > 0) or 
-                master_freqs.get(w, 0) > 0 or 
-                pageviews.get(w, 0) > 0):
+            keep = False
+            if active_filters["wiki"] and w in w_list: keep = True
+            elif active_filters["wordnet"] and w in n_list: keep = True
+            elif active_filters["zipf"] and (zipf_frequency and zipf_frequency(w, "en") > 0): keep = True
+            elif active_filters["ngram"] and master_freqs.get(w, 0) > 0: keep = True
+            elif active_filters["pageviews"] and pageviews.get(w, 0) > 0: keep = True
+            
+            if keep:
                 filtered_final.append(w)
             else:
                 discarded_words.add(w)
