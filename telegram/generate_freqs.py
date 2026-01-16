@@ -130,6 +130,18 @@ def load_master_frequency(path):
                 except ValueError: continue
     return freqs
 
+def load_pageviews_cache(pageviews_file_path):
+    pageviews = {}
+    if pageviews_file_path.is_file():
+        with pageviews_file_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().rsplit(" ", 1)
+                if len(parts) == 2:
+                    try:
+                        pageviews[parts[0]] = int(parts[1])
+                    except ValueError: continue
+    return pageviews
+
 def main():
     script_dir = Path(__file__).parent
     root_dir = script_dir.parent
@@ -146,6 +158,7 @@ def main():
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--all", action="store_true", help="Keep all words from the scrape.")
     group.add_argument("--wiktionary", action="store_true", help="Keep only words on the Wiktionary list.")
+    group.add_argument("--strict", action="store_true", help="Only keep words found in reference lists (no API-only words).")
     
     parser.add_argument("--pageviews-months", type=int, default=0)
     parser.add_argument("--pageviews-project", default="en.wiktionary")
@@ -174,6 +187,7 @@ def main():
     master_freqs = load_master_frequency(args.master_list)
     w_list = load_wordlist(args.wiktionary_list)
     n_list = load_wordlist(args.wordnet_list)
+    pv_cache = load_pageviews_cache(Path(args.pageviews_file))
 
     final_words = set()
     discarded_words = set()
@@ -186,15 +200,30 @@ def main():
         final_words = scraped_words & w_list
         discarded_words = scraped_words - final_words
     else:
-        print("Mode: Default. Keeping words on Wiktionary, WordNet, or with Zipf/Ngram scores.")
+        print("Mode: Default. Keeping words on Wiktionary, WordNet, Zipf, Ngram, or with pageviews.")
         for w in scraped_words:
             is_valid = False
+            # Check local reference lists first
             if w in w_list or w in n_list:
                 is_valid = True
             elif zipf_frequency and zipf_frequency(w, "en") > 0:
                 is_valid = True
             elif master_freqs.get(w, 0) > 0:
                 is_valid = True
+            elif pv_cache.get(w, 0) > 0:
+                is_valid = True
+            
+            # If still not valid and not in strict mode, we will let fetch_pageviews decide later
+            # but we need to include them in final_words now so they ARE checked.
+            # However, to avoid checking every single typo, we only do this if it's NOT strict.
+            if not is_valid and not args.strict:
+                # We'll assume it might be valid and let fetch_pageviews verify it.
+                # If fetch_pageviews returns 0, it won't be very useful, but it will be in the list.
+                # To be safe and avoid junk, maybe we ONLY include if it's already in pv_cache
+                # OR if it's "reasonably" likely to be a word.
+                # Let's stick to the user's request: "has a pageview count"
+                # If it's not in cache, we don't know yet.
+                is_valid = True # Be inclusive as requested
             
             if is_valid:
                 final_words.add(w)
@@ -210,8 +239,31 @@ def main():
 
     pageviews = fetch_pageviews(final_words, args, Path(args.pageviews_file))
     
+    # Post-fetch filtering: if it was only included for checking and it has 0 pageviews
+    # AND it's not in any other local lists, we discard it now.
+    if not (args.all or args.wiktionary):
+        filtered_final = []
+        for w in final_words:
+            if (w in w_list or w in n_list or 
+                (zipf_frequency and zipf_frequency(w, "en") > 0) or 
+                master_freqs.get(w, 0) > 0 or 
+                pageviews.get(w, 0) > 0):
+                filtered_final.append(w)
+            else:
+                discarded_words.add(w)
+        
+        if len(filtered_final) != len(final_words):
+            print(f"Post-fetch filtering: {len(final_words) - len(filtered_final)} words removed for 0 pageviews.")
+            # Update discarded words file if needed
+            if discarded_words:
+                Path(args.discarded).write_text("\n".join(sorted(discarded_words)) + "\n", encoding="utf-8")
+        
+        final_words_list = filtered_final
+    else:
+        final_words_list = list(final_words)
+
     sorted_words = sorted(
-        final_words, 
+        final_words_list, 
         key=lambda w: (master_freqs.get(w, 0), pageviews.get(w, 0), w), 
         reverse=False
     )
