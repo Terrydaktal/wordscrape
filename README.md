@@ -32,38 +32,59 @@ A multi-stage pipeline for extracting unique vocabulary from Telegram chat expor
 └── requirements.txt                  # Dependencies (tqdm, wordfreq, etc.)
 ```
 
-## Pipeline Execution
+## Setup & Pipeline Execution
 
-To process a new Telegram chat export, run the following scripts in order:
+To process a new Telegram chat export, follow these steps in order.
 
-### 1. Extraction
-Extracts all unique words from messages and uses OCR (Tesseract) on images.
+### 1. Installation & Requirements
+*   Python 3.12+
+*   Tesseract OCR (for image scraping): `sudo apt install tesseract-ocr`
+*   Setup environment and dependencies:
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    ```
+
+### 2. Initial Setup (Reference Data)
+Before processing a chat, you must generate the master reference lists. This typically only needs to be done once.
+
+1.  **Google Ngram Data**: Ensure `GoogleNgram/google_master_freqs.txt` exists (this is a large 7.9M word frequency list).
+2.  **Wiktionary List**: Download the latest dump and extract English titles.
+    ```bash
+    python3 wiktionary/extract_english_titles.py  # This will download the ~1GB XML dump automatically
+    python3 wiktionary/build_wiktionary_wordlist.py
+    ```
+3.  **WordNet List**:
+    ```bash
+    python3 wordnet/generate_wordnet_wordlist.py
+    ```
+
+### 3. Step-by-Step Pipeline
+
+#### A. Word Extraction
+Export your Telegram chat as **HTML** (ensure "Images" are checked). Then run:
 ```bash
-./.venv/bin/python3 telegram/tg_word_scrape.py --chat-dir "/path/to/chat_export"
+python3 telegram/tg_word_scrape.py --chat-dir "/path/to/Telegram Desktop/ChatExport_2026-01-16/"
 ```
+This produces `telegram/scrapedwords.txt` and `telegram/ocr_word_map.json`.
 
-### 2. Sanitisation & Ranking
-Filters out "garbage" (typos, non-words) and ranks the survivors by rarity. It uses Google Books Ngram data and Wiktionary Pageviews.
+#### B. Filtering & Ranking
+Clean the raw scrape and rank words by rarity using Google Ngram and Wiktionary pageview data.
 ```bash
-./.venv/bin/python3 telegram/generate_freqs.py
+python3 telegram/generate_freqs.py
 ```
-*Note: This script automatically updates the master `wiktionary/wiktionary_pageviews.txt` with any new words found.*
+*Note: This script will fetch missing pageview counts from the Wikimedia API and cache them in `wiktionary/wiktionary_pageviews.txt`.*
 
-### 3. Definition Building
-Processes the offline Wiktionary XML dump to find structured definitions for your ranked list.
+#### C. Dictionary Building
+Build the final offline dictionary (`telegram/worddefs.txt`) by extracting definitions from the Wiktionary XML dump.
 ```bash
-./.venv/bin/python3 telegram/wiktionary_define_and_collapse.py
+python3 telegram/wiktionary_define_and_collapse.py
 ```
+This script uses a cache (`wiktionary/wiktionary_definitions.txt`) to make subsequent runs nearly instantaneous.
+
+---
 
 ## Reference Data Scripts
-
-These are used to build the foundational datasets and typically only need to be run once:
-
-*   **Build Wiktionary List**: `extract_english_titles.py` -> `build_wiktionary_wordlist.py`
-*   **Build WordNet List**: `generate_wordnet_wordlist.py`
-*   **Master Pageview Scraper**: `get_pageviews.py` (Resumable background scraper for the entire 937k Wiktionary vocabulary).
-
-## Requirements
-*   Python 3.12+
-*   Tesseract OCR (for image scraping)
-*   Dependencies in `requirements.txt` (install via `pip install -r requirements.txt`)
+*   **`get_pageviews.py`**: A background scraper to pre-populate the entire 937k Wiktionary vocabulary pageview database (optional).
+*   **`extract_words.py`**: Utility to strip definitions from `worddefs.txt` to get a clean list of words that have valid definitions.
