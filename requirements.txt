@@ -2,4 +2,3 @@ pillow
 pytesseract
 wordfreq
 nltk
-google-generativeai
