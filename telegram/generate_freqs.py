@@ -75,7 +75,7 @@ def _fetch_pageviews_word(word, *, project, access, agent, granularity, start, e
             return 0
     return 0
 
-def fetch_pageviews(words, args, pageviews_file_path):
+def fetch_pageviews(words, args, pageviews_file_path, valid_word_list=None):
     pageviews = {}
     
     if pageviews_file_path.is_file():
@@ -86,7 +86,21 @@ def fetch_pageviews(words, args, pageviews_file_path):
                 if len(parts) == 2:
                     pageviews[parts[0]] = int(parts[1])
 
-    remaining = [w for w in words if w not in pageviews]
+    # Only fetch from API if word is in wiktionary_english_words.txt (valid_word_list)
+    remaining = []
+    skipped_count = 0
+    for w in words:
+        if w in pageviews:
+            continue
+        if valid_word_list is not None and w not in valid_word_list:
+            pageviews[w] = 0
+            skipped_count += 1
+            continue
+        remaining.append(w)
+
+    if skipped_count:
+        print(f"Skipping API fetch for {skipped_count} words not in Wiktionary list.")
+
     if remaining:
         print(f"Fetching {len(remaining)} missing words from API...")
         max_workers = max(1, min(int(args.pageviews_workers), len(remaining)))
@@ -237,7 +251,7 @@ def main():
         Path(args.discarded).write_text("\n".join(sorted(discarded_words)) + "\n", encoding="utf-8")
         print(f"Wrote discarded words to {args.discarded}")
 
-    pageviews = fetch_pageviews(final_words, args, Path(args.pageviews_file))
+    pageviews = fetch_pageviews(final_words, args, Path(args.pageviews_file), valid_word_list=w_list)
     
     # Post-fetch filtering: if it was only included for checking and it has 0 pageviews
     # AND it's not in any other local lists, we discard it now.

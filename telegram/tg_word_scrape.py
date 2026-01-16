@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 IMAGE_EXTENSIONS = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
-WORD_RE = re.compile(r"[A-Za-z]+(?:'[A-Za-z]+)?")
+WORD_RE = re.compile(r"\b\w+(?:['\w]+)?\b")
 REPEATED_CHAR_RE = re.compile(r"(.)\1\1")
 
 class TelegramHTMLParser(HTMLParser):
