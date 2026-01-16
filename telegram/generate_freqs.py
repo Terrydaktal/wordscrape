@@ -137,6 +137,7 @@ def main():
     parser = argparse.ArgumentParser(description="Filter non-dictionary words and generate wordfreqs.txt")
     parser.add_argument("--input", default=str(script_dir / "scrapedwords.txt"))
     parser.add_argument("--output", default=str(script_dir / "wordfreqs.txt"))
+    parser.add_argument("--discarded", default=str(script_dir / "discarded_words.txt"))
     parser.add_argument("--wiktionary-list", default=str(root_dir / "wiktionary" / "wiktionary_english_words.txt"))
     parser.add_argument("--wordnet-list", default=str(root_dir / "wordnet" / "wordnet.txt"))
     parser.add_argument("--master-list", default=str(root_dir / "GoogleNgram" / "google_master_freqs.txt"))
@@ -166,42 +167,51 @@ def main():
         print(f"Input file not found: {args.input}")
         return 1
 
-    words = load_wordlist(args.input)
-    print(f"Loaded {len(words)} unique words from {args.input}")
+    scraped_words = load_wordlist(args.input)
+    print(f"Loaded {len(scraped_words)} unique words from {args.input}")
 
     print(f"Loading Master Google Ngram frequencies (7.9M words)...")
     master_freqs = load_master_frequency(args.master_list)
+    w_list = load_wordlist(args.wiktionary_list)
+    n_list = load_wordlist(args.wordnet_list)
+
+    final_words = set()
+    discarded_words = set()
 
     if args.all:
         print("Mode: --all. Keeping all words.")
+        final_words = scraped_words
     elif args.wiktionary:
         print("Mode: --wiktionary. Keeping only words on Wiktionary list.")
-        w_list = load_wordlist(args.wiktionary_list)
-        words &= w_list
+        final_words = scraped_words & w_list
+        discarded_words = scraped_words - final_words
     else:
         print("Mode: Default. Keeping words on Wiktionary, WordNet, or with Zipf/Ngram scores.")
-        w_list = load_wordlist(args.wiktionary_list)
-        n_list = load_wordlist(args.wordnet_list)
-        
-        filtered = set()
-        for w in words:
+        for w in scraped_words:
+            is_valid = False
             if w in w_list or w in n_list:
-                filtered.add(w)
-                continue
-            if zipf_frequency and zipf_frequency(w, "en") > 0:
-                filtered.add(w)
-                continue
-            if master_freqs.get(w, 0) > 0:
-                filtered.add(w)
-                continue
-        words = filtered
+                is_valid = True
+            elif zipf_frequency and zipf_frequency(w, "en") > 0:
+                is_valid = True
+            elif master_freqs.get(w, 0) > 0:
+                is_valid = True
+            
+            if is_valid:
+                final_words.add(w)
+            else:
+                discarded_words.add(w)
 
-    print(f"Final word count after filtering: {len(words)}")
+    print(f"Final word count: {len(final_words)}")
+    print(f"Discarded count: {len(discarded_words)}")
 
-    pageviews = fetch_pageviews(words, args, Path(args.pageviews_file))
+    if discarded_words:
+        Path(args.discarded).write_text("\n".join(sorted(discarded_words)) + "\n", encoding="utf-8")
+        print(f"Wrote discarded words to {args.discarded}")
+
+    pageviews = fetch_pageviews(final_words, args, Path(args.pageviews_file))
     
     sorted_words = sorted(
-        words, 
+        final_words, 
         key=lambda w: (master_freqs.get(w, 0), pageviews.get(w, 0), w), 
         reverse=False
     )
@@ -212,15 +222,16 @@ def main():
         return 0
 
     max_word_len = max([len(w) for w in sorted_words] + [4])
-    header = f"{ 'WORD':<{max_word_len}}  {'G_MASTER':>15}  {'PAGEVIEWS':>10}  {'ZIPF':>10}"
-    sep = f"{'-'*max_word_len}  {'-'*15}  {'-'*10}  {'-'*10}"
+    header = f"{ 'WORD':<{max_word_len}}  {'IN_WIKI':>7}  {'G_MASTER':>15}  {'PAGEVIEWS':>10}  {'ZIPF':>10}"
+    sep = f"{'-'*max_word_len}  {'-'*7}  {'-'*15}  {'-'*10}  {'-'*10}"
     lines = [header, sep]
     
     for w in sorted_words:
+        in_wiki = "YES" if w in w_list else "NO"
         zipf = zipf_frequency(w, "en") if zipf_frequency else 0.0
         g_freq = master_freqs.get(w, 0)
         p_views = pageviews.get(w, 0)
-        lines.append(f"{w:<{max_word_len}}  {g_freq:>15d}  {p_views:>10d}  {zipf:>10.6f}")
+        lines.append(f"{w:<{max_word_len}}  {in_wiki:>7}  {g_freq:>15d}  {p_views:>10d}  {zipf:>10.6f}")
     
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Wrote {len(sorted_words)} words to {output_path}")
