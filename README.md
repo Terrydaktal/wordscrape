@@ -28,7 +28,8 @@ A multi-stage pipeline for extracting unique vocabulary from Telegram chat expor
 │   ├── generate_wordnet_wordlist.py  # Generate wordlist from NLTK WordNet
 │   └── wordnet.txt                   # Reference list
 ├── GoogleNgram/                      # REFERENCE DATA
-│   └── google_master_freqs.txt       # Massive frequency list (7.9M words)
+│   ├── fetch_google_freqs.py         # Script to download and extract Ngram data
+│   └── google_master_freqs.txt       # Massive frequency list (7.9M words, generated)
 └── requirements.txt                  # Dependencies (tqdm, wordfreq, etc.)
 ```
 
@@ -89,5 +90,6 @@ This script uses a cache (`wiktionary/wiktionary_definitions.txt`) to make subse
 ---
 
 ## Reference Data Scripts
+*   **`fetch_google_freqs.py`**: Downloads and extracts the 7.9M word Google Ngram frequency list.
 *   **`get_pageviews.py`**: A background scraper to pre-populate the entire 937k Wiktionary vocabulary pageview database (optional).
 *   **`extract_words.py`**: Utility to strip definitions from `worddefs.txt` to get a clean list of words that have valid definitions.
