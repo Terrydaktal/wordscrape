@@ -156,6 +156,31 @@ def load_pageviews_cache(pageviews_file_path):
                     except ValueError: continue
     return pageviews
 
+def write_discarded_log(discarded_words, master_freqs, log_path):
+    if not discarded_words: return
+    
+    # Sort by G_MASTER asc, then ZIPF asc, then word asc
+    sorted_discarded = sorted(
+        discarded_words,
+        key=lambda w: (
+            master_freqs.get(w, 0),
+            zipf_frequency(w, "en") if zipf_frequency else 0.0,
+            w
+        )
+    )
+    
+    max_word_len = max([len(w) for w in sorted_discarded] + [4])
+    header = f"{ 'WORD':<{max_word_len}}  {'G_MASTER':>15}  {'ZIPF':>10}"
+    sep = f"{'-'*max_word_len}  {'-'*15}  {'-'*10}"
+    lines = [header, sep]
+    
+    for w in sorted_discarded:
+        zipf = zipf_frequency(w, "en") if zipf_frequency else 0.0
+        g_freq = master_freqs.get(w, 0)
+        lines.append(f"{w:<{max_word_len}}  {g_freq:>15d}  {zipf:>10.6f}")
+    
+    Path(log_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
 def main():
     script_dir = Path(__file__).parent
     root_dir = script_dir.parent
@@ -260,7 +285,7 @@ def main():
     print(f"Discarded count: {len(discarded_words)}")
 
     if discarded_words:
-        Path(args.discarded).write_text("\n".join(sorted(discarded_words)) + "\n", encoding="utf-8")
+        write_discarded_log(discarded_words, master_freqs, args.discarded)
         print(f"Wrote discarded words to {args.discarded}")
 
     pageviews = fetch_pageviews(final_words, args, Path(args.pageviews_file), valid_word_list=w_list)
@@ -286,7 +311,7 @@ def main():
             print(f"Post-fetch filtering: {len(final_words) - len(filtered_final)} words removed for 0 pageviews.")
             # Update discarded words file if needed
             if discarded_words:
-                Path(args.discarded).write_text("\n".join(sorted(discarded_words)) + "\n", encoding="utf-8")
+                write_discarded_log(discarded_words, master_freqs, args.discarded)
         
         final_words_list = filtered_final
     else:
