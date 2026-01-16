@@ -71,14 +71,24 @@ Export your Telegram chat as **HTML** (ensure "Images" are checked). Then run:
 ```bash
 python3 telegram/tg_word_scrape.py --chat-dir "/path/to/Telegram Desktop/ChatExport_2026-01-16/"
 ```
-This produces `telegram/scrapedwords.txt` and `telegram/ocr_word_map.json`.
+This produces `telegram/scrapedwords.txt` containing all raw alphanumeric tokens (inclusive of digits/apostrophes) and `telegram/ocr_word_map.json`.
 
 #### B. Filtering & Ranking
-Clean the raw scrape and rank words by rarity using Google Ngram and Wiktionary pageview data.
+Clean the raw scrape and rank words by rarity. By default, it uses Wiktionary, WordNet, Zipf, and Google Ngram data.
 ```bash
 python3 telegram/generate_freqs.py
 ```
-*Note: This script will fetch missing pageview counts from the Wikimedia API and cache them in `wiktionary/wiktionary_pageviews.txt`.*
+
+**Advanced Filtering:**
+You can toggle specific linguistic sources using flags. If any flag is provided, only those selected are used:
+- `--wiki`: Use Wiktionary word list.
+- `--wordnet`: Use WordNet.
+- `--zipf`: Use Zipf frequency (>0).
+- `--ngram`: Use Google Ngram frequency (>0).
+- `--pageviews`: Use Wiktionary pageviews (>0).
+- `--strict`: Skip API-based pageview fetching for words not in the local Wiktionary list.
+
+*Note: The script automatically caches Wikimedia API pageview counts. Words that fail all active filters are logged in `telegram/discarded_words.txt` in a formatted table showing their frequencies.*
 
 #### C. Dictionary Building
 Build the final offline dictionary (`telegram/worddefs.txt`) by extracting definitions from the Wiktionary XML dump.
